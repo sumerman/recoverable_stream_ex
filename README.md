@@ -1,18 +1,20 @@
 # RecoverableStreamEx
 
-Just an idea I was toying around with, not a production code.
+This is just an idea I was toying around with, **not a production code.**
+
 Streams are the best way to handle "potentially infinite" data:
 imagine a query scanning a table with a filter and returning rows
 in batches. E.g. `Postgrex.stream/4` provides an interface like
 that. 
 
 But what happens if a connection to a database stutters?
-The entire stream fails. An app should should retry. But what if
-retrying from the beginning is expensive? E.g. it'd mean to re-scan
-hundreds of GBs. Can we make it transparent for a client-code?
+The entire stream would fail. Then an app should retry. But what if
+retrying from the beginning is expensive? E.g. it'd mean the database
+has to re-scan hundreds of GBs. Can we avoid that? Can we make it 
+transparent for a client-code?
 
-`RecoverableStream` wraps stream reduction in another process,
-retries up to N times, passing the last known value, then propagates
+`RecoverableStream` moves stream reduction into a separate process,
+retries up to N times, from the last retrived value, then propagates
 an error. 
 
 ## Basic usage
@@ -24,7 +26,7 @@ and must return a new stream:
 
 ```Elixir
 gen_stream_f = fn 
-  # the first clause would fail after 10 elements
+  # will fail after 10 elements
   nil -> Stream.iterate(1, fn x when x < 10 -> x + 1 end)
   x   -> Stream.iterate(x + 1, &(&1+1))
 end
