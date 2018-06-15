@@ -55,7 +55,7 @@ to the stream creation function.
 ```Elixir
 gen_stream = fn last_val, %{conn: conn} ->
   [from, _, _] = last_val || [0, 0, 0] 
-  Postgrex.stream(conn,  "SELECT a, b, c FROM recoverable_stream_test WHERE a > $1", [from])
+  Postgrex.stream(conn,  "SELECT a, b, c FROM recoverable_stream_test WHERE a > $1 ORDER BY a", [from])
   |> Stream.flat_map(fn(%Postgrex.Result{rows: rows}) -> rows end) 
 end
 

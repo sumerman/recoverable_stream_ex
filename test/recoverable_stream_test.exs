@@ -85,7 +85,7 @@ defmodule RecoverableStreamTest do
   defp resumable_stream_from(pid) do
     gen_stream = fn last_val, %{conn: conn} ->
       [from, _, _] = last_val || [0, 0, 0] 
-      Postgrex.stream(conn,  "SELECT * FROM recoverable_stream_test WHERE a > $1", [from])
+      Postgrex.stream(conn,  "SELECT * FROM recoverable_stream_test WHERE a > $1 ORDER BY a", [from])
       |> Stream.flat_map(fn(%Postgrex.Result{rows: rows}) -> rows end) 
       |> Stream.map(fn [a, _, _] = x -> 
         if a == 10_000 and last_val == nil do
