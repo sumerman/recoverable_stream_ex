@@ -76,11 +76,16 @@ defmodule RecoverableStream do
     # TODO consider adding a timeout
   end
 
-  defp after_fun(%{task: %Task{} = t, reply_ref: rref}) do
-    send(t.pid, {:done, rref})
-    # TODO wait for 'down'
-    Process.demonitor(t.ref, [:flush])
-    Task.Supervisor.terminate_child(TasksPool, t.pid)
+  defp after_fun(%{task: %Task{ref: tref, pid: tpid}, reply_ref: rref} = ctx) do
+    send(tpid, {:done, rref})
+    receive do
+      {:DOWN, ^tref, _, _, :normal} -> :ok
+      {:DOWN, ^tref, _, _, reason} -> 
+        exit({reason, {__MODULE__, :after_fun, ctx}})
+    after 100 -> 
+      Process.demonitor(tref, [:flush])
+      Task.Supervisor.terminate_child(TasksPool, tpid)
+    end
   end
 
   defp stream_reducer(stream, owner, reply_ref) do
