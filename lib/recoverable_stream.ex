@@ -17,7 +17,6 @@ defmodule RecoverableStream do
     ]
   end
 
-  # TODO pluggable reduce
   def run(new_stream_f, opts \\ []) do
     retries = Keyword.get(opts, :retry_attempts, 1)
     wfun = Keyword.get(opts, :wrapper_fun, fn f -> f.(%{}) end)
@@ -55,14 +54,14 @@ defmodule RecoverableStream do
     }
   end
 
-  defp next_fun(%{task: %Task{ref: tref} = t, reply_ref: rref, retries_left: retries} = ctx) do
+  defp next_fun(%{task: %Task{ref: tref, pid: tpid}, reply_ref: rref, retries_left: retries} = ctx) do
+    send(tpid, {:ready, rref})
     receive do
       {^tref, {:done, ^rref}} ->
         Process.demonitor(tref, [:flush])
         {:halt, ctx}
 
-      {:data, ack_ref, ^rref, x} ->
-        send(t.pid, {:ack, ack_ref})
+      {:data, ^rref, x} ->
         {[x], %{ctx | last_value: x}}
 
       {:DOWN, ^tref, _, _, :normal} ->
@@ -77,8 +76,11 @@ defmodule RecoverableStream do
     # TODO consider adding a timeout
   end
 
-  defp after_fun(ctx) do
-    Task.Supervisor.terminate_child(TasksPool, ctx.task.pid)
+  defp after_fun(%{task: %Task{} = t, reply_ref: rref}) do
+    send(t.pid, {:done, rref})
+    # TODO wait for 'down'
+    Process.demonitor(t.ref, [:flush])
+    Task.Supervisor.terminate_child(TasksPool, t.pid)
   end
 
   defp stream_reducer(stream, owner, reply_ref) do
@@ -86,11 +88,11 @@ defmodule RecoverableStream do
 
     stream
     |> Stream.each(fn x ->
-      ack_ref = make_ref()
-      send(owner, {:data, ack_ref, reply_ref, x})
-
       receive do
-        {:ack, ^ack_ref} -> :ok
+        {:done, ^reply_ref} ->
+          exit(:normal)
+        {:ready, ^reply_ref} ->
+          send(owner, {:data, reply_ref, x})
         {:DOWN, ^mon_ref, _, ^owner, reason} ->
           exit(reason)
       end

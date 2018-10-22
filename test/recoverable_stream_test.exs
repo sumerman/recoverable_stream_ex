@@ -25,6 +25,31 @@ defmodule RecoverableStreamTest do
     assert Enum.count(Enum.uniq(res)) == n
   end
 
+  test "normal stream with early termination" do
+    n = 100
+    parent = self()
+    ref = make_ref()
+
+    gen_stream = fn _ ->
+      stream_pid = self()
+      spawn fn ->
+        mon_ref = Process.monitor(stream_pid)
+        receive do
+          {:DOWN, ^mon_ref, _, _, reason} ->
+            send parent, {:down, ref, reason}
+        end
+      end
+
+      Stream.iterate(1, &(&1 + 1))
+    end
+
+    _res = RS.run(gen_stream)
+           |> Stream.take(n) 
+           |> Enum.into([])
+    assert_receive {:down, ^ref, :normal}
+  end
+
+
   test "recovery in a failing stream" do
     n = 20
     res = RS.run(gen_stream_f())
