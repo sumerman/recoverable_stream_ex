@@ -20,7 +20,7 @@ defmodule RecoverableStreamEx.MixProject do
 
   defp deps do
     [
-      {:postgrex, "~> 0.13.5", only: [:dev, :test], runtime: false}
+      {:postgrex, "~> 0.15", only: [:dev, :test], runtime: false}
     ]
   end
 end

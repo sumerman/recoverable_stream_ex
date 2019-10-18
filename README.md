@@ -1,7 +1,5 @@
 # RecoverableStreamEx
 
-This is just an idea I was toying around with, **not a production code.**
-
 Streams are the best way to handle "potentially infinite" data:
 imagine a query scanning a table with a filter and returning rows
 in batches. E.g. `Postgrex.stream/4` provides an interface like
