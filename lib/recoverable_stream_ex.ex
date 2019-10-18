@@ -10,7 +10,7 @@ defmodule RecoverableStreamEx do
     children = [
       RecoverableStream.TasksPool.child_spec()
     ]
-    
+
     Supervisor.start_link(children, opts)
   end
 end
