@@ -1,12 +1,27 @@
 defmodule RecoverableStream do
+  @moduledoc """
+  By extracting source stream evaluation into a separate process
+  `RecoverableStream` provides a way to isolate upstream errors
+  and recover from them.
+
+  This module contains public API.
+  """
+
   defmodule TasksPool do
+    @moduledoc """
+    A default `Supervisor` for tasks spawned by `RecoverableStream`.
+    """
+
+    @doc false
     def name, do: __MODULE__
 
+    @doc false
     def child_spec,
       do: Supervisor.Spec.supervisor(Task.Supervisor, [[name: name()]], id: name())
   end
 
   defmodule RecoverableStreamCtx do
+    @moduledoc false
     defstruct [
       :task,
       :reply_ref,
@@ -17,30 +32,91 @@ defmodule RecoverableStream do
     ]
   end
 
-  def run(new_stream_f, opts \\ []) do
-    retries = Keyword.get(opts, :retry_attempts, 1)
-    wfun = Keyword.get(opts, :wrapper_fun, fn f -> f.(%{}) end)
+  @type last_value_t :: nil | any()
+  @type stream_arg_t :: any()
+
+  @type stream_fun ::
+          (last_value_t() -> Enumerable.t())
+          | (last_value_t(), stream_arg_t() -> Enumerable.t())
+
+  @type inner_reduce_fun :: (stream_arg_t() -> none())
+  @type wrapper_fun :: (inner_reduce_fun() -> none())
+
+  @type run_option ::
+          {:retry_attempts, non_neg_integer()}
+          | {:wrapper_fun, wrapper_fun()}
+
+  @spec run(stream_fun(), [run_option()]) :: Enumerable.t()
+  @doc """
+  Evaluates passed `t:stream_fun/0` inside a new `Task` then runs
+  produced stream, forwarding data back to the caller.
+
+  Returns a new `Stream` that gathers data forwarded by the `Task`.
+  Data is forwarded element by element. Batching is to be implemented
+  explicitly. For example `Postgrex.stream/3` sends data in chunks
+  by default.
+
+  ## Stream function
+
+  `t:stream_fun/0` must be a function that accepts one or two arguments.
+
+  - The first argument is either `nil` or the last value received from a
+  stream before recovery.
+  - The second argument is an arbitrary term passed from `t:wrapper_fun/0`
+
+  The function should return a `Stream` (although, any `Enumerable` could work).
+
+  ## Example
+
+      iex> gen_stream_f = fn
+      ...>   nil -> Stream.iterate(1, fn x when x < 2 -> x + 1 end)
+      ...>     x -> Stream.iterate(x + 1, &(&1+1))
+      ...> end
+      iex> RecoverableStream.run(gen_stream_f)
+      ...> |> Stream.take(4)
+      ...> |> Enum.into([])
+      [1, 2, 3, 4]
+
+  ## Options
+
+  - `:retry_attempts` (defaults to `1`) the total number of times
+    error recovery is performed before an error is propagated.
+
+    Retries counter is **not** reset upon a successful recovery!
+  - `:wrapper_fun` is a funciton that wraps a stream reducer running
+     inside a `Task` (defaults to `fun f -> f.(%{}) end`).
+
+     Useful when the `t:stream_fun/0` must be run within a certain
+     context. E.g. `Postgrex.stream/3` only works inside
+     `Postgrex.transaction/3`.
+
+     See [Readme](./readme.html#a-practical-example)
+     for a more elaborate example.
+  """
+  def run(new_stream_fun, options \\ []) do
+    retries = Keyword.get(options, :retry_attempts, 1)
+    wfun = Keyword.get(options, :wrapper_fun, fn f -> f.(%{}) end)
 
     Stream.resource(
-      fn -> start_fun(new_stream_f, wfun, retries, nil) end,
+      fn -> start_fun(new_stream_fun, wfun, retries, nil) end,
       &next_fun/1,
       &after_fun/1
     )
   end
 
-  defp start_fun(new_stream_f, wrapper_fun, retries, last_value)
-       when (is_function(new_stream_f, 1) or is_function(new_stream_f, 2)) and
+  defp start_fun(new_stream_fun, wrapper_fun, retries, last_value)
+       when (is_function(new_stream_fun, 1) or is_function(new_stream_fun, 2)) and
               is_integer(retries) and retries >= 0 do
     owner = self()
     reply_ref = make_ref()
 
     t =
       Task.Supervisor.async_nolink(TasksPool, fn ->
-        wrapper_fun.(fn opts ->
-          if is_function(new_stream_f, 1) do
-            new_stream_f.(last_value)
+        wrapper_fun.(fn stream_arg ->
+          if is_function(new_stream_fun, 1) do
+            new_stream_fun.(last_value)
           else
-            new_stream_f.(last_value, opts)
+            new_stream_fun.(last_value, stream_arg)
           end
           |> stream_reducer(owner, reply_ref)
         end)
@@ -50,7 +126,7 @@ defmodule RecoverableStream do
       task: t,
       reply_ref: reply_ref,
       retries_left: retries,
-      stream_fun: new_stream_f,
+      stream_fun: new_stream_fun,
       wrapper_fun: wrapper_fun,
       last_value: last_value
     }
@@ -66,6 +142,7 @@ defmodule RecoverableStream do
         Process.demonitor(tref, [:flush])
         {:halt, ctx}
 
+      # TODO add an optional retries reset
       {:data, ^rref, x} ->
         {[x], %{ctx | last_value: x}}
 

@@ -1,6 +1,8 @@
 defmodule RecoverableStreamTest do
   use ExUnit.Case, async: true
 
+  doctest RecoverableStream
+
   alias RecoverableStream, as: RS
 
   defp gen_stream_f() do
