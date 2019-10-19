@@ -1,6 +1,6 @@
 defmodule RecoverableStream do
   @moduledoc """
-  By extracting source stream evaluation into a separate process
+   By extracting evaluation of the source stream into a separate process
   `RecoverableStream` provides a way to isolate upstream errors
   and recover from them.
 
