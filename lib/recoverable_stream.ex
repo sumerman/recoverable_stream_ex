@@ -12,18 +12,30 @@ defmodule RecoverableStream do
     A default `Supervisor` for tasks spawned by `RecoverableStream`.
     """
 
-    @doc false
-    def name, do: __MODULE__
+    @doc """
+    A template `child_spec` for a custom `Task.Supervisor`.
 
-    @doc false
-    def child_spec,
-      do: Supervisor.Spec.supervisor(Task.Supervisor, [[name: name()]], id: name())
+    ## Example
+
+        iex> {:ok, _} = Supervisor.start_child(
+        ...>             RecoverableStreamEx.Supervisor,
+        ...>             RecoverableStream.TasksPool.child_spec(:my_sup))
+        ...> RecoverableStream.run(
+        ...>     fn x -> Stream.repeatedly(fn -> x end) end,
+        ...>     task_supervisor: :my_sup
+        ...> ) |> Stream.take(2) |> Enum.into([])
+        [nil, nil]
+
+    """
+    def child_spec(name),
+      do: Supervisor.Spec.supervisor(Task.Supervisor, [[name: name]], id: name)
   end
 
   defmodule RecoverableStreamCtx do
     @moduledoc false
     defstruct [
       :task,
+      :supervisor,
       :reply_ref,
       :retries_left,
       :stream_fun,
@@ -45,6 +57,7 @@ defmodule RecoverableStream do
   @type run_option ::
           {:retry_attempts, non_neg_integer()}
           | {:wrapper_fun, wrapper_fun()}
+          | {:task_supervisor, atom() | pid()}
 
   @spec run(stream_fun(), [run_option()]) :: Enumerable.t()
   @doc """
@@ -83,6 +96,13 @@ defmodule RecoverableStream do
     error recovery is performed before an error is propagated.
 
     Retries counter is **not** reset upon a successful recovery!
+
+  - `:task_supervisor` either pid or a name of `Task.Supervisor`
+     to supervise a stream-reducer `Task`.
+     (defaults to `RecoverableStream.TaskPool`)
+
+     See `RecoverableStream.TasksPool.child_spec/1` for details.
+
   - `:wrapper_fun` is a funciton that wraps a stream reducer running
      inside a `Task` (defaults to `fun f -> f.(%{}) end`).
 
@@ -96,22 +116,23 @@ defmodule RecoverableStream do
   def run(new_stream_fun, options \\ []) do
     retries = Keyword.get(options, :retry_attempts, 1)
     wfun = Keyword.get(options, :wrapper_fun, fn f -> f.(%{}) end)
+    supervisor = Keyword.get(options, :task_supervisor, TasksPool)
 
     Stream.resource(
-      fn -> start_fun(new_stream_fun, wfun, retries, nil) end,
+      fn -> start_fun(new_stream_fun, wfun, supervisor, retries, nil) end,
       &next_fun/1,
       &after_fun/1
     )
   end
 
-  defp start_fun(new_stream_fun, wrapper_fun, retries, last_value)
+  defp start_fun(new_stream_fun, wrapper_fun, supervisor, retries, last_value)
        when (is_function(new_stream_fun, 1) or is_function(new_stream_fun, 2)) and
               is_integer(retries) and retries >= 0 do
     owner = self()
     reply_ref = make_ref()
 
     t =
-      Task.Supervisor.async_nolink(TasksPool, fn ->
+      Task.Supervisor.async_nolink(supervisor, fn ->
         wrapper_fun.(fn stream_arg ->
           if is_function(new_stream_fun, 1) do
             new_stream_fun.(last_value)
@@ -124,6 +145,7 @@ defmodule RecoverableStream do
 
     %RecoverableStreamCtx{
       task: t,
+      supervisor: supervisor,
       reply_ref: reply_ref,
       retries_left: retries,
       stream_fun: new_stream_fun,
@@ -132,9 +154,14 @@ defmodule RecoverableStream do
     }
   end
 
-  defp next_fun(
-         %{task: %Task{ref: tref, pid: tpid}, reply_ref: rref, retries_left: retries} = ctx
-       ) do
+  defp next_fun(ctx) do
+    %{
+      task: %Task{ref: tref, pid: tpid},
+      supervisor: sup,
+      reply_ref: rref,
+      retries_left: retries
+    } = ctx
+
     send(tpid, {:ready, rref})
 
     receive do
@@ -153,7 +180,7 @@ defmodule RecoverableStream do
         exit({reason, {__MODULE__, :next_fun, ctx}})
 
       {:DOWN, ^tref, _, _, _reason} ->
-        {[], start_fun(ctx.stream_fun, ctx.wrapper_fun, retries - 1, ctx.last_value)}
+        {[], start_fun(ctx.stream_fun, ctx.wrapper_fun, sup, retries - 1, ctx.last_value)}
     end
 
     # TODO consider adding a timeout
