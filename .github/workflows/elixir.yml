@@ -1,0 +1,35 @@
+name: Elixir CI
+
+on: push
+
+jobs:           
+  build:
+
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+       elixir_vsn: ["1.9-slim", "1.6-slim", "slim"]
+
+    services:
+      database:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD:
+        ports: 
+          - 5432:5432
+        
+    container:
+      image: elixir:${{matrix.elixir_vsn}}
+      env:
+        PG_HOST: database
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install Dependencies
+      run: |
+        mix local.rebar --force
+        mix local.hex --force
+        mix deps.get
+    - name: Run Tests
+      run: mix test
