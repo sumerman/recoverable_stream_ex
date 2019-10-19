@@ -5,8 +5,19 @@ defmodule PostgresTest do
   @moduletag capture_log: true
 
   setup_all do
+    pg_hostname = System.get_env("PG_HOST") || "localhost"
+    pg_username = System.get_env("PG_USER") || "postgres"
+    pg_password = System.get_env("PG_PASS") || ""
     {:ok, _} = Application.ensure_all_started(:postgrex)
-    {:ok, pid} = Postgrex.start_link(database: "postgres", username: "postgres", password: "")
+
+    {:ok, pid} =
+      Postgrex.start_link(
+        database: "postgres",
+        hostname: pg_hostname,
+        username: pg_username,
+        password: pg_password
+      )
+
     %{db_conn: pid}
   end
 
