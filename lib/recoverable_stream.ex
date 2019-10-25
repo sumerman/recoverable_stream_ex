@@ -103,7 +103,7 @@ defmodule RecoverableStream do
 
      See `RecoverableStream.TasksPool.child_spec/1` for details.
 
-  - `:wrapper_fun` is a funciton that wraps a stream reducer running
+  - `:wrapper_fun` is a function that wraps a stream reducer running
      inside a `Task` (defaults to `fun f -> f.(%{}) end`).
 
      Useful when the `t:stream_fun/0` must be run within a certain
