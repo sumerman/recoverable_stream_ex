@@ -23,6 +23,7 @@ re-creation fun and a list of options. Stream creation function
 is called with the last element, obtained from a stream or `nil`
 and must return a new stream:
 
+```elixir
     gen_stream_f = fn 
       # will fail after 10 elements
       nil -> Stream.iterate(1, fn x when x < 10 -> x + 1 end)
@@ -35,6 +36,7 @@ and must return a new stream:
       |> Enum.into([])
 
     assert Enum.into(1..n, []) == res
+```
 
 ## A Practical Example
 
@@ -50,6 +52,7 @@ be conducted within a transaction. An additional `wrapper_fun`
 parameter allows us to comply. The wrapper fun is allowed to
 pass additional metadata to the stream creation function.
 
+```elixir
     gen_stream = fn last_val, %{conn: conn} ->
       [from, _, _] = last_val || [0, 0, 0] 
       Postgrex.stream(conn,  "SELECT a, b, c FROM recoverable_stream_test WHERE a > $1 ORDER BY a", [from])
@@ -63,3 +66,4 @@ pass additional metadata to the stream creation function.
     RecoverableStream.run(gen_stream, wrapper_fun: wrapper_fun)
     |> Stream.each(&IO.inspect/1)
     |> Stream.run
+```
